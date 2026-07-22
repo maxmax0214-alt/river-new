@@ -194,7 +194,7 @@ def collect_all(bgn_date: dt.date, end_date: dt.date, out_csv: str = "river_leve
     try:
         existing = pd.read_csv(out_csv, parse_dates=["timestamp"])
         combined = pd.concat([existing, new_df], ignore_index=True)
-    except FileNotFoundError:
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         combined = new_df
 
     combined = combined.drop_duplicates(subset=["timestamp", "station"]).sort_values(

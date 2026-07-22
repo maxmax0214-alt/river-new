@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>東京 河川水位モニター（プロトタイプ）</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+JP:wght@400;500;700;900&display=swap');
+
+  :root{
+    --bg:#0B1520;
+    --panel:#121D2A;
+    --panel-line:#1F3040;
+    --blue:#3FA9F5;
+    --amber:#F0A93A;
+    --red:#E5484D;
+    --teal:#2DD4A7;
+    --text:#E7EEF3;
+    --sub:#6F8494;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Noto Sans JP', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:
+      radial-gradient(ellipse at top left, rgba(63,169,245,0.08), transparent 55%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    padding:28px 32px 60px;
+  }
+
+  header{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    border-bottom:1px solid var(--panel-line);
+    padding-bottom:18px;
+    margin-bottom:22px;
+    flex-wrap:wrap;
+    gap:14px;
+  }
+  .title-block .eyebrow{
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.18em;
+    color:var(--blue);
+    margin-bottom:6px;
+  }
+  h1{ margin:0; font-size:26px; font-weight:900; letter-spacing:.01em; }
+  .subtitle{color:var(--sub); font-size:13px; margin-top:6px;}
+  .clock{ font-family:var(--mono); text-align:right; color:var(--sub); font-size:12px; line-height:1.6; }
+  .clock b{color:var(--text); font-size:14px;}
+
+  /* ── Data source bar ─────────────────── */
+  .source-bar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:10px;
+    padding:14px 20px;
+    margin-bottom:26px;
+    flex-wrap:wrap;
+  }
+  .source-bar .desc{color:var(--sub); font-size:13px;}
+  .source-bar .desc strong{color:var(--text); font-weight:500;}
+  .source-bar .actions{display:flex; align-items:center; gap:10px;}
+  .btn{
+    font-family:var(--mono);
+    font-size:12px;
+    font-weight:700;
+    padding:8px 14px;
+    border-radius:7px;
+    border:1px solid var(--blue);
+    background:rgba(63,169,245,.12);
+    color:var(--blue);
+    cursor:pointer;
+  }
+  .btn:hover{background:rgba(63,169,245,.22);}
+  .btn.ghost{border-color:var(--panel-line); background:transparent; color:var(--sub);}
+  #fileInput{display:none;}
+  .data-tag{
+    font-family:var(--mono); font-size:10.5px; font-weight:700;
+    padding:3px 9px; border-radius:20px;
+  }
+  .data-tag.sample{background:rgba(240,169,58,.14); color:var(--amber); border:1px solid rgba(240,169,58,.4);}
+  .data-tag.csv{background:rgba(45,212,167,.14); color:var(--teal); border:1px solid rgba(45,212,167,.4);}
+
+  /* ── Grid ─────────────────────────────── */
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));
+    gap:18px;
+  }
+  .card{
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:12px;
+    padding:20px;
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+  }
+  .card-head{display:flex; justify-content:space-between; align-items:flex-start;}
+  .river-name{font-size:17px; font-weight:700;}
+  .station-name{color:var(--sub); font-size:12px; margin-top:2px;}
+  .badge{
+    font-family:var(--mono); font-size:11px; font-weight:700;
+    padding:4px 10px; border-radius:6px; white-space:nowrap;
+  }
+  .badge.ok{background:rgba(45,212,167,.14); color:var(--teal); border:1px solid rgba(45,212,167,.4);}
+  .badge.warn{background:rgba(240,169,58,.14); color:var(--amber); border:1px solid rgba(240,169,58,.4);}
+  .badge.mute{background:rgba(111,132,148,.12); color:var(--sub); border:1px solid var(--panel-line);}
+
+  .body-row{display:flex; gap:18px;}
+
+  /* ── ゲージ（観測期間内の相対レンジで自動スケール） ── */
+  .gauge-wrap{width:120px; flex-shrink:0; display:flex; flex-direction:column; align-items:flex-start;}
+  .gauge-row{display:flex; gap:6px;}
+  .gauge{
+    position:relative; width:26px; height:150px;
+    border-radius:4px; overflow:hidden;
+    border:1px solid var(--panel-line);
+    background:repeating-linear-gradient(to bottom, #1a2a38 0px, #1a2a38 8px, #16232f 8px, #16232f 16px);
+    flex-shrink:0;
+  }
+  .gauge .water{
+    position:absolute; left:0; right:0; bottom:0;
+    background:linear-gradient(to top, rgba(63,169,245,.55), rgba(63,169,245,.25));
+    border-top:2px solid var(--blue);
+    transition:height .4s ease;
+  }
+  .gauge .now-tick{
+    position:absolute; left:-4px; width:0; height:0;
+    border-top:4px solid transparent; border-bottom:4px solid transparent;
+    border-left:5px solid var(--text);
+  }
+  .ticks{ position:relative; height:150px; flex:1; font-family:var(--mono); font-size:9px; line-height:1.1; }
+  .ticks span{ position:absolute; left:0; transform:translateY(50%); white-space:nowrap; color:var(--sub); }
+  .ticks span b{color:var(--text); font-weight:500;}
+  .gauge-label{font-family:var(--mono); font-size:9px; color:var(--sub); margin-top:6px; text-align:left;}
+
+  .metrics{flex:1; display:flex; flex-direction:column; gap:10px; min-width:0;}
+  .level-now{display:flex; align-items:baseline; gap:6px;}
+  .level-now .num{font-family:var(--mono); font-size:32px; font-weight:700;}
+  .level-now .unit{font-family:var(--mono); font-size:13px; color:var(--sub);}
+  .delta{font-family:var(--mono); font-size:12px; display:flex; align-items:center; gap:4px;}
+  .delta.up{color:var(--red);}
+  .delta.down{color:var(--teal);}
+  .delta.flat{color:var(--sub);}
+  .last-updated{font-family:var(--mono); font-size:10px; color:var(--sub);}
+
+  .chart-box{height:86px; margin-top:2px;}
+
+  /* ── 対象外カード（神田川） ───────────── */
+  .card.outofscope{ justify-content:center; align-items:flex-start; }
+  .oos-icon{font-family:var(--mono); font-size:11px; color:var(--amber); border:1px solid rgba(240,169,58,.4); background:rgba(240,169,58,.1); padding:3px 9px; border-radius:6px;}
+  .oos-text{color:var(--sub); font-size:12.5px; line-height:1.8;}
+  .oos-text b{color:var(--text); font-weight:500;}
+
+  footer{
+    margin-top:34px; padding-top:18px; border-top:1px solid var(--panel-line);
+    color:var(--sub); font-size:12px; line-height:1.9;
+  }
+  footer b{color:var(--text);}
+  footer .src-list{font-family:var(--mono); font-size:11px; margin-top:6px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-block">
+    <div class="eyebrow">TOKYO RIVER MONITOR — PROTOTYPE</div>
+    <h1>東京 河川水位モニター</h1>
+    <div class="subtitle">collect_river_levels.py が出力したCSVを読み込んで表示します</div>
+  </div>
+  <div class="clock">
+    画面表示時刻<br>
+    <b id="clockTime">—</b>
+  </div>
+</header>
+
+<div class="source-bar">
+  <div class="desc">
+    表示中のデータ：<span class="data-tag sample" id="dataTag">サンプル</span>
+    <span id="sourceDesc">まだCSVが読み込まれていません。読み込むまではダミーの推移を表示しています。</span>
+  </div>
+  <div class="actions">
+    <label class="btn" for="fileInput">CSVを手動で読み込む</label>
+    <input type="file" id="fileInput" accept=".csv">
+    <button class="btn ghost" id="resetBtn">サンプルに戻す</button>
+  </div>
+</div>
+
+<div class="grid" id="cardGrid"></div>
+
+<footer>
+  <b>このダッシュボードについて</b><br>
+  水位の推移のみを表示しています。氾濫注意水位・氾濫危険水位などのしきい値は観測所ごとに公式値の確認が必要なため、現時点では未設定です（各観測所の「観測所情報」ページに記載の 水防団待機水位／はん濫注意水位／避難判断水位／はん濫危険水位 を確認し次第、追加予定）。<br><br>
+  収集元：<code>collect_river_levels.py</code>（国交省 水文水質データベース／1日数回のバッチ取得）
+  <div class="src-list">
+    ・多摩川：田園調布（下）　・荒川：南砂町　・江戸川：高砂　・隅田川：隅田水門（裏）<br>
+    ・神田川：東京都管理河川のため対象外（東京都水防災総合情報システム側で別途対応予定）
+  </div>
+</footer>
+
+<script>
+document.getElementById('clockTime').textContent =
+  new Date().toLocaleString('ja-JP', {year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+
+// collect_river_levels.py の STATIONS に対応する表示対象
+const RIVERS_CONFIG = [
+  { river:'荒川',   station:'南砂町' },
+  { river:'隅田川', station:'隅田水門（裏）' },
+  { river:'江戸川', station:'高砂' },
+  { river:'多摩川', station:'田園調布（下）' },
+];
+
+// CSV読込前に表示するダミーの推移（実データのイメージ確認用）
+function makeSampleSeries(base){
+  const now = new Date();
+  const pts = [];
+  for(let i=6;i>=0;i--){
+    const t = new Date(now.getTime() - i*60*60*1000);
+    const wobble = Math.sin(i*0.7)*0.08 + (Math.random()-0.5)*0.05;
+    pts.push({ timestamp:t, water_level_m: +(base + wobble + (6-i)*0.02).toFixed(2) });
+  }
+  return pts;
+}
+
+let seriesByStation = {}; // key: `${river}__${station}` -> [{timestamp, water_level_m}, ...]
+let usingCsv = false;
+
+function loadSampleData(){
+  usingCsv = false;
+  seriesByStation = {};
+  const bases = { '荒川':3.4, '隅田川':1.8, '江戸川':2.3, '多摩川':1.9 };
+  RIVERS_CONFIG.forEach(cfg => {
+    seriesByStation[`${cfg.river}__${cfg.station}`] = makeSampleSeries(bases[cfg.river] ?? 2.0);
+  });
+  document.getElementById('dataTag').textContent = 'サンプル';
+  document.getElementById('dataTag').className = 'data-tag sample';
+  document.getElementById('sourceDesc').textContent = 'まだCSVが読み込まれていません。読み込むまではダミーの推移を表示しています。';
+  render();
+}
+
+function loadCsvText(text){
+  const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+  const rows = parsed.data;
+
+  const grouped = {};
+  rows.forEach(r => {
+    if(!r.timestamp || !r.river || !r.station || !r.water_level_m) return;
+    const key = `${r.river}__${r.station}`;
+    if(!grouped[key]) grouped[key] = [];
+    grouped[key].push({ timestamp: new Date(r.timestamp), water_level_m: parseFloat(r.water_level_m) });
+  });
+  Object.keys(grouped).forEach(k => grouped[k].sort((a,b) => a.timestamp - b.timestamp));
+
+  seriesByStation = grouped;
+  usingCsv = true;
+  document.getElementById('dataTag').textContent = 'CSV読込済み';
+  document.getElementById('dataTag').className = 'data-tag csv';
+  document.getElementById('sourceDesc').textContent = `${Object.keys(grouped).length}地点のデータを読み込みました。`;
+  render();
+}
+
+document.getElementById('fileInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => loadCsvText(ev.target.result);
+  reader.readAsText(file, 'utf-8');
+});
+document.getElementById('resetBtn').addEventListener('click', loadSampleData);
+
+// ── 起動時に同じ場所の river_levels.csv を自動取得する ──
+// GitHub Pages 等、HTMLとCSVが同じ場所にホストされている場合に有効。
+// file:// で直接開いた場合や、CSVが未配置の場合は失敗するのでサンプル表示にフォールバックする。
+async function tryAutoLoad(){
+  try{
+    const res = await fetch(`./river_levels.csv?t=${Date.now()}`); // キャッシュ回避
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    if(!text.trim()) throw new Error('empty file');
+    loadCsvText(text);
+    document.getElementById('sourceDesc').textContent += '（自動取得）';
+  } catch(err){
+    console.info('river_levels.csv の自動取得はスキップされました:', err.message);
+    loadSampleData();
+  }
+}
+
+function render(){
+  const grid = document.getElementById('cardGrid');
+  grid.innerHTML = '';
+
+  RIVERS_CONFIG.forEach((cfg, idx) => {
+    const key = `${cfg.river}__${cfg.station}`;
+    const series = (seriesByStation[key] || []).slice(-12); // 直近12点まで表示
+
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    if(series.length === 0){
+      card.innerHTML = `
+        <div class="card-head">
+          <div>
+            <div class="river-name">${cfg.river}</div>
+            <div class="station-name">${cfg.station} 観測所</div>
+          </div>
+          <div class="badge mute">データなし</div>
+        </div>
+        <div class="oos-text">この期間のデータが見つかりませんでした。CSVの内容、または収集スクリプトの実行結果を確認してください。</div>
+      `;
+      grid.appendChild(card);
+      return;
+    }
+
+    const last = series[series.length - 1];
+    const prev = series.length > 1 ? series[series.length - 2] : last;
+    const delta = +(last.water_level_m - prev.water_level_m).toFixed(2);
+    const deltaCls = delta > 0.02 ? 'up' : delta < -0.02 ? 'down' : 'flat';
+    const arrow = delta > 0.02 ? '▲' : delta < -0.02 ? '▼' : '─';
+
+    const values = series.map(p => p.water_level_m);
+    const rawMin = Math.min(...values), rawMax = Math.max(...values);
+    const pad = Math.max(0.1, (rawMax - rawMin) * 0.25);
+    const gaugeMin = +(rawMin - pad).toFixed(2);
+    const gaugeMax = +(rawMax + pad).toFixed(2);
+    const pct = Math.min(100, Math.max(0, ((last.water_level_m - gaugeMin) / (gaugeMax - gaugeMin)) * 100));
+
+    card.innerHTML = `
+      <div class="card-head">
+        <div>
+          <div class="river-name">${cfg.river}</div>
+          <div class="station-name">${cfg.station} 観測所</div>
+        </div>
+        <div class="badge ${usingCsv ? 'ok' : 'mute'}">${usingCsv ? '実データ' : 'サンプル'}</div>
+      </div>
+      <div class="body-row">
+        <div class="gauge-wrap">
+          <div class="gauge-row">
+            <div class="gauge">
+              <div class="water" style="height:${pct}%;"></div>
+              <div class="now-tick" style="bottom:${pct}%;"></div>
+            </div>
+            <div class="ticks">
+              <span style="bottom:100%;">表示上限 <b>${gaugeMax.toFixed(2)}m</b></span>
+              <span style="bottom:0%;">表示下限 <b>${gaugeMin.toFixed(2)}m</b></span>
+            </div>
+          </div>
+          <div class="gauge-label">直近レンジで自動縮尺</div>
+        </div>
+        <div class="metrics">
+          <div class="level-now">
+            <span class="num">${last.water_level_m.toFixed(2)}</span>
+            <span class="unit">m</span>
+          </div>
+          <div class="delta ${deltaCls}">${arrow} ${Math.abs(delta).toFixed(2)}m（前回観測比）</div>
+          <div class="chart-box"><canvas id="chart${idx}"></canvas></div>
+          <div class="last-updated">最終観測: ${last.timestamp.toLocaleString('ja-JP', {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'})}</div>
+        </div>
+      </div>
+    `;
+    grid.appendChild(card);
+
+    new Chart(document.getElementById(`chart${idx}`), {
+      type: 'line',
+      data: {
+        labels: series.map(p => p.timestamp.toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit', hour12:false})),
+        datasets: [{
+          data: values,
+          borderColor: '#3FA9F5',
+          backgroundColor: 'rgba(63,169,245,.12)',
+          fill: true, tension: .35, pointRadius: 0, borderWidth: 2,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend:{display:false}, tooltip:{enabled:false} },
+        scales: {
+          x: {
+            display:true, grid:{display:false}, border:{color:'#1F3040'},
+            ticks:{ color:'#6F8494', font:{family:"'JetBrains Mono', monospace", size:9}, maxRotation:0, autoSkip:true, maxTicksLimit:4 }
+          },
+          y: { display:false }
+        }
+      }
+    });
+  });
+
+  // 神田川：対象外カード
+  const oosCard = document.createElement('div');
+  oosCard.className = 'card outofscope';
+  oosCard.innerHTML = `
+    <div class="card-head">
+      <div>
+        <div class="river-name">神田川</div>
+        <div class="station-name">飯田橋・和田見橋 等（候補）</div>
+      </div>
+      <span class="oos-icon">対象外</span>
+    </div>
+    <div class="oos-text">
+      東京都管理河川のため、国交省の水文水質データベースには収録されていません。<br>
+      表示するには <b>東京都水防災総合情報システム</b> 側の観測データを別ルートで収集する仕組みが別途必要です。
+    </div>
+  `;
+  grid.appendChild(oosCard);
+}
+
+tryAutoLoad();
+</script>
+
+</body>
+</html>
